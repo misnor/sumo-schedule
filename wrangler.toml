@@ -1,4 +1,4 @@
-name = "sumo-bot-worker"
+name = "sumo-scheduler"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 
