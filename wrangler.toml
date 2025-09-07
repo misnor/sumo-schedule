@@ -3,7 +3,4 @@ main = "src/index.ts"
 compatibility_date = "2025-09-01"
 
 [vars]
-DISCORD_PUBLIC_KEY = "paste_from_portal"
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/xxx/yyy" # target channel
-SUMO_WEBHOOK_SECRET = "choose_a_random_shared_secret"
 TZ = "America/Halifax"

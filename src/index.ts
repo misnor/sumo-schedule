@@ -96,27 +96,23 @@ function concatToBuffer(chunks: Uint8Array[]): ArrayBuffer {
 
 // Sumo-API webhook: verify HMAC-SHA256(secret, url + body) == X-Webhook-Signature
 async function handleSumoWebhook(req: Request, env: Env): Promise<Response> {
-  const signature = req.headers.get('X-Webhook-Signature') ?? '';
+  const sig = req.headers.get('X-Webhook-Signature') ?? '';
   const raw = await req.arrayBuffer();
   const enc = new TextEncoder();
-  const toSign = concat([enc.encode(new URL(req.url).pathname), new Uint8Array(raw)]);
-  const key = await crypto.subtle.importKey(
-    'raw', enc.encode(env.SUMO_WEBHOOK_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
-  );
-  const toSignBuf = concatToBuffer([enc.encode(new URL(req.url).pathname), new Uint8Array(raw)]);
-  const mac = await crypto.subtle.sign('HMAC', key, toSignBuf);
-  const hex = [...new Uint8Array(mac)].map(b => b.toString(16).padStart(2,'0')).join('');
-  if (hex !== signature) return new Response('bad signature', { status: 401 });
+
+  // HMAC-SHA256(secret, url + body) per docs
+  const key = await crypto.subtle.importKey('raw', enc.encode(env.SUMO_WEBHOOK_SECRET), { name:'HMAC', hash:'SHA-256' }, false, ['sign']);
+  const urlBytes = enc.encode(req.url); // full URL string, not just path
+  const merged = new Uint8Array(urlBytes.length + raw.byteLength);
+  merged.set(urlBytes, 0);
+  merged.set(new Uint8Array(raw), urlBytes.length);
+  const mac = await crypto.subtle.sign('HMAC', key, merged.buffer);
+  const hex = [...new Uint8Array(mac)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  if (hex !== sig) return new Response('bad signature', { status: 401 });
 
   const payload = JSON.parse(new TextDecoder().decode(raw));
-  // Minimal relay using channel webhook URL
-  await fetch(env.DISCORD_WEBHOOK_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(formatSumoMessage(payload))
-  });
-
-  return new Response(null, { status: 204 }); // acknowledge per docs
+  // …post to Discord or handle locally…
+  return new Response(null, { status: 204 });
 }
 
 function formatSumoMessage(evt: any) {
