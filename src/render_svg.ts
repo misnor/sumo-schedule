@@ -13,7 +13,8 @@ type SvgOpts = {
 type FontEmbed = { family: string; dataBase64: string };
 
 export function renderSVG(md: RenderInput, opts: SvgOpts = {}, font?: FontEmbed): string {
-  const width = opts.width ?? 1200;
+  // Reduce default width by 40% (previous default 1200 -> new default 720)
+  const width = opts.width ?? Math.round(1200 * 0.6);
   const rowH = opts.rowHeight ?? 36;
   const pad = opts.pad ?? 24;
   const fontFamily = font ? font.family : (opts.fontFamily ?? 'DejaVu Sans');
