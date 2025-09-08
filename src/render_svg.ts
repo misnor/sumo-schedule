@@ -39,6 +39,11 @@ export function renderSVG(md: RenderInput, opts: SvgOpts = {}, font?: FontEmbed)
 
   const cols = layoutCols(width);
 
+  // Single column labels (not repeated per row): show on left/right of center to indicate
+  // that names to the left are East and names to the right are West.
+  lines.push(txt('East', cols.center.x - CENTER_BUFFER, y - rowH / 2, 14, fontFamily, '#8a8f98', '400', 'end', true));
+  lines.push(txt('West', cols.center.x + CENTER_BUFFER, y - rowH / 2, 14, fontFamily, '#8a8f98', '400', 'start', true));
+
   for (const band of bandList) {
     lines.push(rect(0, y, width, rowH, '#141722'));
     lines.push(txt(band, cols.center.x, y + rowH / 2, 16, fontFamily, '#ffd479', '400', 'middle', true));
