@@ -1,0 +1,5 @@
+[{
+  "name":"basho",
+  "description":"Show start/end dates for a sumo basho",
+  "options":[{"type":3,"name":"yyyymm","description":"e.g. 202509","required":false}]
+}]

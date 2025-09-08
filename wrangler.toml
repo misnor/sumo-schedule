@@ -4,3 +4,4 @@ compatibility_date = "2025-09-01"
 
 [vars]
 TZ = "America/Halifax"
+DISCORD_APPLICATION_ID = "1414352173537689600"
