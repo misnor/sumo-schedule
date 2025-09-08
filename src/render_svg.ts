@@ -1,79 +1,69 @@
+// src/render_svg.ts
 import type { RenderInput, RenderRow, Band } from './types';
+import { parseFontFromB64, textToPath, type OTFont } from './text_path';
 
 const ORDER: Band[] = ['Yokozuna', 'Ozeki', 'Sekiwake', 'Komusubi', 'Maegashira'];
-const CENTER_BUFFER = 50; // px of spacing between names and the center rank token
+const CENTER_BUFFER = 50;
 
-type SvgOpts = {
-  width?: number;
-  rowHeight?: number;
-  pad?: number;
-  fontFamily?: string;
-};
-
+type SvgOpts = { width?: number; rowHeight?: number; pad?: number; fontFamily?: string };
 type FontEmbed = { family: string; dataBase64: string };
 
-export function renderSVG(md: RenderInput, opts: SvgOpts = {}, font?: FontEmbed): string {
-  // Reduce default width by 40% (previous default 1200 -> new default 720)
+export async function renderSVG(
+  md: RenderInput,
+  opts: SvgOpts = {},
+  font?: FontEmbed
+): Promise<string> {
   const width = opts.width ?? Math.round(1200 * 0.6);
   const rowH = opts.rowHeight ?? 36;
   const pad = opts.pad ?? 24;
-  const fontFamily = font ? font.family : (opts.fontFamily ?? 'DejaVu Sans');
+
+  if (!font?.dataBase64) throw new Error('FontEmbed with base64 TTF required.');
+  const ot: OTFont = parseFontFromB64(font.dataBase64);
 
   const groups = groupEw(md.rows);
   const bandList = ORDER.filter(b => groups.get(b)?.size);
 
   const headerH = 64, subH = 28;
   let y = pad + headerH + subH + pad;
+
   let rowsCount = 0;
-  for (const b of bandList) {
-    rowsCount += 1;
-    rowsCount += (groups.get(b)?.size ?? 0);
-  }
+  for (const b of bandList) { rowsCount += 1; rowsCount += (groups.get(b)?.size ?? 0); }
   const height = y + rowsCount * rowH + pad + 24;
+  const centerX = Math.floor(width / 2);
 
   const lines: string[] = [];
   lines.push(rect(0, 0, width, height, '#0b0c10'));
 
-  lines.push(txt(md.title, pad, pad + 32, 32, fontFamily, '#ffffff', '400', 'start', true));
-  lines.push(txt(md.subtitle, pad, pad + 58, 18, fontFamily, '#c0c0c0', '400', 'start', true));
+  lines.push(pathTxt(ot, md.title, pad, pad + 32, 32, '#ffffff', 'start', true));
+  lines.push(pathTxt(ot, md.subtitle, pad, pad + 58, 18, '#c0c0c0', 'start', true));
 
-  const cols = layoutCols(width);
-
-  // Single column labels (not repeated per row): show on left/right of center to indicate
-  // that names to the left are East and names to the right are West.
-  lines.push(txt('East', cols.center.x - CENTER_BUFFER, y - rowH / 2, 14, fontFamily, '#8a8f98', '400', 'end', true));
-  lines.push(txt('West', cols.center.x + CENTER_BUFFER, y - rowH / 2, 14, fontFamily, '#8a8f98', '400', 'start', true));
+  lines.push(pathTxt(ot, 'East', centerX - CENTER_BUFFER, y - rowH / 2, 14, '#8a8f98', 'end', true));
+  lines.push(pathTxt(ot, 'West', centerX + CENTER_BUFFER, y - rowH / 2, 14, '#8a8f98', 'start', true));
 
   for (const band of bandList) {
     lines.push(rect(0, y, width, rowH, '#141722'));
-    lines.push(txt(band, cols.center.x, y + rowH / 2, 16, fontFamily, '#ffd479', '400', 'middle', true));
+    lines.push(pathTxt(ot, band, centerX, y + rowH / 2, 16, '#ffd479', 'middle', true));
     y += rowH;
 
     let stripe = false;
     const ranks = Array.from(groups.get(band)!.keys()).sort((a, b) => a - b);
     for (const n of ranks) {
       const pair = groups.get(band)!.get(n)!;
-      const bg = stripe ? '#0f1220' : '#10131f';
-      lines.push(rect(0, y, width, rowH, bg));
+      lines.push(rect(0, y, width, rowH, stripe ? '#0f1220' : '#10131f'));
 
-      // East: right-aligned with buffer
       if (pair.east) {
-        lines.push(txt(
-          formatNameDelta(pair.east.shikona, pair.east.deltaLabel),
-          cols.center.x - CENTER_BUFFER, y + rowH / 2, 16, fontFamily,
-          colorForDelta(pair.east.deltaLabel), '400', 'end', true
+        lines.push(pathTxt(
+          ot, formatNameDelta(pair.east.shikona, pair.east.deltaLabel),
+          centerX - CENTER_BUFFER, y + rowH / 2, 16, colorForDelta(pair.east.deltaLabel), 'end', true
         ));
       }
 
-      // Center rank marker
-      lines.push(txt(`${abbrBand(band)}${n}`, cols.center.x, y + rowH / 2, 16, fontFamily, '#e4e7ee', '400', 'middle', true));
+      lines.push(pathTxt(ot, `${abbrBand(band)}${n}`, centerX, y + rowH / 2, 16, '#e4e7ee', 'middle', true));
 
-      // West: left-aligned with buffer
       if (pair.west) {
-        lines.push(txt(
-          formatNameDelta(pair.west.shikona, pair.west.deltaLabel),
-          cols.center.x + CENTER_BUFFER, y + rowH / 2, 16, fontFamily,
-          colorForDelta(pair.west.deltaLabel), '400', 'start', true
+        lines.push(pathTxt(
+          ot, formatNameDelta(pair.west.shikona, pair.west.deltaLabel),
+          centerX + CENTER_BUFFER, y + rowH / 2, 16, colorForDelta(pair.west.deltaLabel), 'start', true
         ));
       }
 
@@ -82,19 +72,14 @@ export function renderSVG(md: RenderInput, opts: SvgOpts = {}, font?: FontEmbed)
     }
   }
 
-  lines.push(txt('Δ vs previous banzuke. East/West = ±0.5.', pad, height - pad, 14, fontFamily, '#8a8f98', '400', 'start', true));
-
-  const fontCss = font
-    ? `@font-face{font-family:${font.family};src:url(data:font/ttf;base64,${font.dataBase64}) format('truetype');font-weight:400;font-style:normal;}`
-    : '';
+  lines.push(pathTxt(ot, 'Δ vs previous banzuke. East/West = ±0.5.', pad, height - pad, 14, '#8a8f98', 'start', false));
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-  <defs><style>${fontCss}</style></defs>
-  ${lines.join('\n')}
+${lines.join('\n')}
 </svg>`;
 }
 
-// --- helpers ---
+// helpers
 
 function groupEw(rows: RenderRow[]): Map<Band, Map<number, { east?: RenderRow; west?: RenderRow }>> {
   const out = new Map<Band, Map<number, { east?: RenderRow; west?: RenderRow }>>();
@@ -109,22 +94,22 @@ function groupEw(rows: RenderRow[]): Map<Band, Map<number, { east?: RenderRow; w
   return out;
 }
 
-function layoutCols(width: number) {
-  return { center: { x: Math.floor(width / 2) } };
-}
-
 function rect(x: number, y: number, w: number, h: number, fill: string) {
   return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}"/>`;
 }
 
-function txt(
-  s: string, x: number, y: number, size: number, fontFamily: string,
-  fill = '#fff', weight: '400'|'500'|'600'|'700' = '400',
-  anchor: 'start'|'end'|'middle' = 'start', center = false
-) {
-  const esc = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const baseline = center ? ` dominant-baseline="middle"` : '';
-  return `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${size}" fill="${fill}" font-weight="${weight}" text-anchor="${anchor}"${baseline}>${esc}</text>`;
+function pathTxt(
+  font: OTFont,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  fill: string,
+  anchor: 'start'|'middle'|'end',
+  centerY: boolean
+): string {
+  const { d } = textToPath(font, text, x, y, size, { anchor, centerY });
+  return `<path d="${d}" fill="${fill}"/>`;
 }
 
 function abbrBand(b: Band): string {

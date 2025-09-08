@@ -1,7 +1,11 @@
 name = "sumo-scheduler"
 main = "src/index.ts"
-compatibility_date = "2025-09-01"
+compatibility_date = "2025-09-08"
 
 [vars]
 TZ = "America/Halifax"
 DISCORD_APPLICATION_ID = "1414352173537689600"
+
+[assets]
+directory = "assets"
+binding   = "ASSETS"

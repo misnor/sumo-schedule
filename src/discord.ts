@@ -1,7 +1,8 @@
+// src/discord.ts
 import {
   verifyKey,
   InteractionType,
-  InteractionResponseType
+  InteractionResponseType,
 } from 'discord-interactions';
 
 import type { Env, Basho } from './types';
@@ -12,9 +13,16 @@ import {
   resolveTargetId,
   validateBashoId,
   bashoLooksMissing,
-  computeUpcomingId
+  computeUpcomingId,
+  fetchBanzuke,
 } from './sumoApi';
-import { json, field, followupEndpoint, postFollowup } from './http';
+import { json, field, followupEndpoint, postFollowup, postFollowupImage } from './http';
+
+import { loadPrevContext } from './context';
+import { computeDiff } from './diff';
+import { buildPresentation } from './presentation';
+import { renderSVG } from './render_svg';
+import { ensureResvgInit, svgToPng } from './rasterize';
 
 export async function handleDiscord(req: Request, env: Env, ctx: any): Promise<Response> {
   const sig = req.headers.get('X-Signature-Ed25519') ?? '';
@@ -30,65 +38,145 @@ export async function handleDiscord(req: Request, env: Env, ctx: any): Promise<R
     return json({ type: InteractionResponseType.PONG });
   }
 
-  if (msg.type === InteractionType.APPLICATION_COMMAND && msg.data?.name === 'basho') {
-    const ack = json({ type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE });
+  if (msg.type === InteractionType.APPLICATION_COMMAND) {
+    const name = msg.data?.name;
 
-    ctx.waitUntil((async () => {
-      const followupUrl = followupEndpoint(msg.application_id, msg.token);
+    // /basho — unchanged behavior (embed)
+    if (name === 'basho') {
+      const ack = json({ type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE });
 
-      try {
-        const supplied = msg.data.options?.find((o: any) => o.name === 'yyyymm')?.value as string | undefined;
+      ctx.waitUntil((async () => {
+        const followupUrl = followupEndpoint(msg.application_id, msg.token);
 
-        if (supplied) {
-          const v = validateBashoId(supplied);
-          if (v) { await postFollowup(followupUrl, { content: v, flags: 64 }); return; }
+        try {
+          const supplied = msg.data.options?.find((o: any) => o.name === 'yyyymm')?.value as string | undefined;
 
-          const b = await getBasho(supplied);
+          if (supplied) {
+            const v = validateBashoId(supplied);
+            if (v) { await postFollowup(followupUrl, { content: v, flags: 64 }); return; }
+
+            const b = await getBasho(supplied);
+            if (bashoLooksMissing(b)) {
+              await postFollowup(followupUrl, {
+                content: `Basho not found for ${supplied}. Valid months: 01, 03, 05, 07, 09, 11.`,
+                flags: 64
+              });
+              return;
+            }
+
+            await postFollowup(followupUrl, { embeds: [buildBashoEmbed(b!, { includeCountdown: false })] });
+            return;
+          }
+
+          const targetId = await resolveTargetId(undefined);
+          let b = await getBasho(targetId);
+
+          if (bashoLooksMissing(b)) {
+            const fallbackId = computeUpcomingId(new Date());
+            if (fallbackId !== targetId) b = await getBasho(fallbackId);
+          }
+
           if (bashoLooksMissing(b)) {
             await postFollowup(followupUrl, {
-              content: `Basho not found for ${supplied}. Valid months: 01, 03, 05, 07, 09, 11.`,
+              content: `Basho not found for ${targetId}. Valid months: 01, 03, 05, 07, 09, 11.`,
               flags: 64
             });
             return;
           }
 
-          await postFollowup(followupUrl, { embeds: [buildBashoEmbed(b!, { includeCountdown: false })] });
-          return;
-        }
+          await postFollowup(followupUrl, { embeds: [buildBashoEmbed(b!, { includeCountdown: true })] });
 
-        const targetId = await resolveTargetId(undefined);
-        let b = await getBasho(targetId);
-
-        if (bashoLooksMissing(b)) {
-          const fallbackId = computeUpcomingId(new Date());
-          if (fallbackId !== targetId) b = await getBasho(fallbackId);
-        }
-
-        if (bashoLooksMissing(b)) {
+        } catch (e: any) {
           await postFollowup(followupUrl, {
-            content: `Basho not found for ${targetId}. Valid months: 01, 03, 05, 07, 09, 11.`,
+            content: `Failed to fetch basho: ${e?.message ?? String(e)}`,
             flags: 64
           });
-          return;
         }
+      })());
 
-        await postFollowup(followupUrl, { embeds: [buildBashoEmbed(b!, { includeCountdown: true })] });
+      return ack;
+    }
 
-      } catch (e: any) {
-        await postFollowup(followupUrl, {
-          content: `Failed to fetch basho: ${e?.message ?? String(e)}`,
-          flags: 64
-        });
-      }
-    })());
+    // NEW: /banzuke — render PNG diff of latest vs previous
+    if (name === 'banzuke') {
+      const ack = json({ type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE });
 
-    return ack;
+      ctx.waitUntil((async () => {
+        const followupUrl = followupEndpoint(msg.application_id, msg.token);
+        try {
+          const targetId = await resolveTargetId(undefined);
+          let b = await getBasho(targetId);
+
+          if (bashoLooksMissing(b)) {
+            const fallbackId = computeUpcomingId(new Date());
+            if (fallbackId !== targetId) b = await getBasho(fallbackId);
+          }
+
+          if (bashoLooksMissing(b)) {
+            await postFollowup(followupUrl, {
+              content: `Basho not found for ${targetId}. Valid months: 01, 03, 05, 07, 09, 11.`,
+              flags: 64
+            });
+            return;
+          }
+
+          await renderAndUploadImage(followupUrl, b!.bashoId, env);
+        } catch (e: any) {
+          await postFollowup(followupUrl, {
+            content: `Failed to render banzuke: ${e?.message ?? String(e)}`,
+            flags: 64
+          });
+        }
+      })());
+
+      return ack;
+    }
   }
 
   return new Response('no-op');
 }
 
-// ---------- Builders ----------
+// ---------- PNG follow-up ----------
+
+async function loadFontFromAssets(env: Env, fname: string): Promise<string> {
+  // @ts-ignore Workers Assets binding
+  const svc = (env as any).ASSETS;
+  if (!svc?.fetch) throw new Error('ASSETS binding missing. Add [assets] in wrangler.toml.');
+
+  // Any origin is fine; ASSETS uses only the path.
+  const url = 'https://assets.local/' + fname;
+  const res = await svc.fetch(new Request(url));
+  if (!res.ok) throw new Error(`ASSETS fetch ${fname} failed: ${res.status}`);
+
+  const buf = new Uint8Array(await res.arrayBuffer());
+  // base64 encode in Worker-safe way
+  let bin = ''; for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+  // @ts-ignore btoa exists in Workers
+  return btoa(bin);
+}
+
+async function renderAndUploadImage(followupUrl: string, currentId: string, env: Env) {
+  // init resvg-wasm with bound module
+  // @ts-ignore CF Workers provides wasm_modules binding
+  await ensureResvgInit((env as any).RESVG_WASM);
+
+  const current = await fetchBanzuke(currentId, 'Makuuchi');
+  const prevCtx = await loadPrevContext(currentId, undefined);
+  const diff    = computeDiff(currentId, prevCtx.prevId, current, prevCtx.prevMakuuchi, prevCtx.prevJuryo);
+  const pres    = buildPresentation(diff, { startDate: undefined });
+
+  const fontB64 = await loadFontFromAssets(env, 'DejaVuSans.ttf');
+  if (!fontB64 || fontB64.length < 10000) {
+    throw new Error('FONT_B64 missing or invalid. Set via wrangler secret/vars.');
+  }
+
+  const svg = await renderSVG(pres, { width: 720 }, { family: 'DejaVu Sans', dataBase64: fontB64 });
+  const png = await svgToPng(svg, 720);
+
+  await postFollowupImage(followupUrl, png, `banzuke-${currentId}-diff.png`);
+}
+
+// ---------- Builders (unchanged for /basho embed) ----------
 
 function buildBashoEmbed(basho: Basho, opts: { includeCountdown: boolean }) {
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
@@ -110,7 +198,6 @@ function buildBashoEmbed(basho: Basho, opts: { includeCountdown: boolean }) {
     basho.venue ? `**Venue:** ${basho.venue}` : null
   ].filter(Boolean);
 
-  // Title: "Month Basho"
   let title = 'Basho N/A';
   if (basho.startDate) {
     const d = new Date(basho.startDate);
