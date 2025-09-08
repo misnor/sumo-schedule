@@ -82,6 +82,8 @@ export type RenderRow = {
   rankLabel: string;
   shikona: string;
   deltaLabel: string;
+  side: 'East' | 'West';
+  rankNum: number;     // 1..N within band
 };
 
 export type RenderInput = {

@@ -34,20 +34,14 @@ export function buildPresentation(
   const titleMonth = monthYearFromStart(opts.startDate, locale) ?? monthYearFromId(diff.currentId, locale);
   const prevMonth = monthYearFromId(diff.prevId, locale);
 
-  // rows already sorted by ordinal asc in DiffResult
   const rows: RenderRow[] = diff.rows.map(r => ({
     band: r.band,
     rankLabel: r.rankLabel,
     shikona: r.shikona,
-    deltaLabel: r.deltaLabel
+    deltaLabel: r.deltaLabel,
+    side: r.side,
+    rankNum: r.rankValue % 100
   }));
 
-  // sanity: ensure band sequence is non-decreasing by hierarchy
-  rows.sort((x, y) => bandOrder(x.band, y.band)); // no-op if already consistent
-
-  return {
-    title: `${titleMonth} Basho`,
-    subtitle: `vs ${prevMonth}`,
-    rows
-  };
+  return { title: `${titleMonth} Basho`, subtitle: `vs ${prevMonth}`, rows };
 }

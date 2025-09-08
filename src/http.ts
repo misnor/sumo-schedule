@@ -1,32 +1,29 @@
-export function json(obj: unknown): Response {
-  return new Response(JSON.stringify(obj), { headers: { 'Content-Type': 'application/json' } });
+export async function postFollowupFile(
+  url: string,
+  payload: Record<string, unknown>,
+  bytes: ArrayBuffer | Uint8Array,   // accept common cases
+  filename: string,
+  mime = 'image/png'
+) {
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify(payload));
+
+  // Normalize to a brand-new ArrayBuffer (never SharedArrayBuffer-backed)
+  const ab: ArrayBuffer = toPlainArrayBuffer(bytes);
+
+  form.append('files[0]', new Blob([ab], { type: mime }), filename);
+  await fetch(url, { method: 'POST', body: form });
 }
 
-export function field(name: string, value: string, inline = true) {
-  return { name, value, inline };
-}
-
-export function followupEndpoint(appId: string, token: string) {
-  return `https://discord.com/api/v10/webhooks/${appId}/${token}`;
-}
-
-export async function postFollowup(url: string, body: unknown) {
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-}
-
-export function toHex(bytes: Uint8Array): string {
-  let out = '';
-  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0');
-  return out;
-}
-
-export function constantTimeEqualHex(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+function toPlainArrayBuffer(src: ArrayBuffer | Uint8Array): ArrayBuffer {
+  if (src instanceof Uint8Array) {
+    const copy = new Uint8Array(src.byteLength);
+    copy.set(src);
+    return copy.buffer; // plain ArrayBuffer
+  }
+  // src is ArrayBuffer
+  const view = new Uint8Array(src);
+  const copy = new Uint8Array(view.byteLength);
+  copy.set(view);
+  return copy.buffer; // plain ArrayBuffer
 }
