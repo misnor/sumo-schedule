@@ -1,10 +1,64 @@
 import type { Basho } from './types';
 import { isUnsetIso } from './time';
 
+import type {
+  Division,
+  BanzukeApi,
+  BanzukeApiRow,
+  Banzuke,
+  BanzukeRow
+} from './types';
+
 export async function getBasho(id: string): Promise<Basho | null> {
   const r = await fetch(`https://www.sumo-api.com/api/basho/${id}`);
   if (!r.ok) throw new Error(`Sumo-API ${r.status}`);
-  return r.json();
+  const data = (await r.json()) as Basho | null;
+  if (data && !data.bashoId) data.bashoId = id;
+  return data;
+}
+
+export async function fetchBanzuke(id: string, division: Division): Promise<Banzuke> {
+  const url = `https://www.sumo-api.com/api/basho/${id}/banzuke/${division}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Sumo-API ${r.status} for ${division} banzuke ${id}`);
+  const api = (await r.json()) as BanzukeApi;
+
+  if (!api || !api.bashoId || api.division !== division) {
+    throw new Error(`Unexpected banzuke payload for ${division} ${id}`);
+  }
+
+  const rows: BanzukeRow[] = [
+    ...normalizeSide(api.east),
+    ...normalizeSide(api.west)
+  ];
+
+  if (rows.length === 0) {
+    throw new Error(`Empty banzuke for ${division} ${id}`);
+  }
+
+  return { bashoId: api.bashoId, division: api.division, rows };
+}
+
+function normalizeSide(items: BanzukeApiRow[]): BanzukeRow[] {
+  return (items ?? []).map((r) => ({
+    rikishiID: r.rikishiID,
+    shikona: r.shikonaEn,
+    side: r.side,
+    rankValue: r.rankValue,
+    rankLabel: r.rank
+  }));
+}
+
+export function pickPreviousId(currentId: string): string {
+  // expects YYYYMM
+  if (!/^\d{6}$/.test(currentId)) return currentId;
+  const y = Number(currentId.slice(0, 4));
+  const m = Number(currentId.slice(4, 6));
+  // basho months are 01,03,05,07,09,11 → go to previous odd month
+  const prevMonth = m === 1 ? 11 : m - 2;
+  const prevYear = m === 1 ? y - 1 : y;
+  const mm = String(prevMonth).padStart(2, '0');
+  return `${prevYear}${mm}`;
 }
 
 /**
@@ -27,7 +81,6 @@ export async function resolveTargetId(supplied?: string): Promise<string> {
   return computeUpcomingId(new Date());
 }
 
-// Current or next odd-month tournament ID (fallback only)
 export function computeUpcomingId(now: Date): string {
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth() + 1;
